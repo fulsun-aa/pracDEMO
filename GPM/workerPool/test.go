@@ -1,114 +1,86 @@
-// 测试一下写一个线程池
 package main
 
+//改进版：任务不应该知道waitgroup的存在，而是由线程池集中管理waitGroup
 import (
 	"fmt"
 	"sync"
-	_ "time"
 )
 
 type task interface {
 	run()
 	getResult()
 }
-type doctorTask struct {
-	wg    *sync.WaitGroup
-	docID int
-	done  string
-}
 
-func (d *doctorTask) run() {
-	d.wg.Done()
-	fmt.Println("doctor", d.docID, "is working")
-}
-func (d *doctorTask) getResult() {
-	d.done = fmt.Sprintf("doctor %d is done", d.docID)
-	fmt.Println(d.done)
-}
+type doctorTask struct{ docID int }
 
-type teacherTask struct {
-	wg        *sync.WaitGroup
-	teacherID int
-	done      string
-}
+func (d *doctorTask) run()       { fmt.Println("doctor", d.docID, "is working") }
+func (d *doctorTask) getResult() { fmt.Println("doctor", d.docID, "is done") }
 
-func (t *teacherTask) run() {
-	t.wg.Done()
-	fmt.Println("teacher", t.teacherID, "is working")
-}
-func (t *teacherTask) getResult() {
-	t.done = fmt.Sprintf("teacher %d is done", t.teacherID)
-	fmt.Println(t.done)
-}
+type teacherTask struct{ teacherID int }
 
-type programmerTask struct {
-	wg           *sync.WaitGroup
-	programmerID int
-	done         string
-}
+func (t *teacherTask) run()       { fmt.Println("teacher", t.teacherID, "is working") }
+func (t *teacherTask) getResult() { fmt.Println("teacher", t.teacherID, "is done") }
 
-func (p *programmerTask) run() {
-	p.wg.Done()
-	fmt.Println("programmer", p.programmerID, "is working")
-}
+type programmerTask struct{ programmerID int }
 
-func (p *programmerTask) getResult() {
-	p.done = fmt.Sprintf("programmer %d is done", p.programmerID)
-	fmt.Println(p.done)
-}
+func (p *programmerTask) run()       { fmt.Println("programmer", p.programmerID, "is working") }
+func (p *programmerTask) getResult() { fmt.Println("programmer", p.programmerID, "is done") }
 
-// 创建一个线程池对象
+// -------------------- Thread Pool --------------------
+
 type threadPool struct {
-	//核心数量
-	coreNum int
-	//创建一个任务队列
+	coreNum   int
 	taskQueue chan task
+	wg        sync.WaitGroup
 }
 
-func NewPool(num int) *threadPool {
+func NewPool(num int, queueSize int) *threadPool {
 	pool := &threadPool{
 		coreNum:   num,
-		taskQueue: make(chan task),
+		taskQueue: make(chan task, queueSize),
 	}
 
-	//创建核心数量的goroutine
 	for i := 0; i < pool.coreNum; i++ {
-		go func() {
-			for task := range pool.taskQueue {
-				task.run()
-				task.getResult()
-			}
-		}()
+		go pool.worker()
 	}
 	return pool
 }
-func (p *threadPool) AddTask(t task, wg *sync.WaitGroup) {
-	wg.Add(1)
+
+func (p *threadPool) worker() {
+	for task := range p.taskQueue {
+		task.run()
+		task.getResult()
+		p.wg.Done()
+	}
+}
+
+func (p *threadPool) AddTask(t task) {
+	p.wg.Add(1)
 	p.taskQueue <- t
 }
 
-func main() {
-	var w = sync.WaitGroup{}
-	pool := NewPool(3)
-	defer close(pool.taskQueue)
+func (p *threadPool) Wait() {
+	p.wg.Wait()
+}
 
-	//创建任务
+func (p *threadPool) Close() {
+	close(p.taskQueue)
+}
+
+// -------------------- Main --------------------
+
+func main() {
+	pool := NewPool(3, 10)
 	for i := 0; i < 7; i++ {
-		obj := &doctorTask{docID: i}
-		obj.wg = &w
-		pool.AddTask(obj, &w)
+		pool.AddTask(&doctorTask{docID: i})
 	}
 	for i := 0; i < 8; i++ {
-		obj := &teacherTask{teacherID: i}
-		obj.wg = &w
-		pool.AddTask(obj, &w)
+		pool.AddTask(&teacherTask{teacherID: i})
 	}
 	for i := 0; i < 9; i++ {
-		obj := &programmerTask{programmerID: i}
-		obj.wg = &w
-		pool.AddTask(obj, &w)
+		pool.AddTask(&programmerTask{programmerID: i})
 	}
 
-	w.Wait()
-
+	pool.Wait()
+	pool.Close()
 }
